@@ -1,0 +1,489 @@
+---
+title:  "Steady State Distribution of an Ergodic Markov Chain"
+author: "Ahmet Yiğit Doğan"
+date:   "28 May, 2022"
+output: 
+    pdf_document:
+        toc: true
+        toc_depth: 2
+        number_sections: true
+        fig_caption: true
+        highlight: tango
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(  message     = FALSE,
+	                    warning     = FALSE,
+                        fig.align   = "center")
+```
+
+\newpage
+
+# Introduction
+
+In this study, two different methods to calculate steady-state probability distribution of randomly created transition probability matrices will be investigated, along with the effect of the inclusion of absorbing states. One can reach the R Markdown file used to create this report from the [GitHub repository of the exercise](https://github.com/ayigitdogan/Steady-State-Distribution-of-an-Ergodic-Markov-Chain).
+
+$~$
+
+# Library Imports and Parameter Definitions
+
+The only extra-Base-R library that will be included in this work is *ggplot2*, which will be used to generate comparison plots.
+
+```{r toolbox}
+
+# Library imports
+
+library(ggplot2)
+
+# Defining the parameters
+
+seed    <- 203
+M       <- 200000
+E       <- 0.0005
+
+```
+
+\newpage
+
+# Generating Transition Probability Matrices
+
+To generate transition probability matrices in a practical way, a function that takes the matrix size as an argument can be defined as follows:
+
+```{r GenerateTPM-definition}
+
+GenerateTPM <- function(n) {                # Creating a function that generates
+                                            # transition probability matrices
+    
+    TPM <- matrix( ,                        # Creating an empty (n+1) x (n+1) matrix
+                  nrow = n+1,
+                  ncol = n+1)               
+    
+    for (i in 1:(n+1)) {                    # Filling the matrix with random numbers
+                                            # between 0 and 1
+        
+        for (j in 1:(n+1)) {
+            
+            TPM[i,j] <- runif(1)
+        
+        }
+    }
+    
+    for (i in 1:(n+1)) {                    # Adjusting the matrix such that
+                                            # all the rows sum up to 1
+        
+        TPM[i,] <- TPM[i,]/sum(TPM[i,])
+        
+    }
+    
+    return(TPM)
+}
+
+```
+
+The next step is to create 3 different transition matrices: 
+
+- $P_1$ with $n=5$,
+- $P_2$ with $n=25$,
+- $P_3$ with $n=50$
+
+```{r TPM-generation}
+
+set.seed(seed)
+
+P1 <- GenerateTPM(5)
+P2 <- GenerateTPM(25)
+P3 <- GenerateTPM(50)
+
+# The appearance of the smallest matrix can be checked to keep track
+
+print(round(P1, 2))
+
+```
+
+\newpage
+
+# Applying Monte Carlo Simulation
+
+To apply Monte Carlo Simulation with the created matrices, a function that takes one matrix and one number for repetitions as arguments can be defined:
+
+```{r monte-carlo-function}
+
+MonteCarlo <- function(TPM, n) {
+    
+    size <- nrow(TPM)               # Creating a variable to store
+                                    # the size of the matrix
+    
+    X0 <- sample(1:size, 1)         # Setting the initial state
+    
+    activeState <- X0               # Initializing the variable that
+                                    # stores the current state
+    
+    statesVec <- c()                # Creating a vector to keep track of
+                                    # the occurrence of states
+    
+    for (rep in 1:n) {              # Creating a loop to control
+                                    # the switches between states
+        
+        r <- runif(1)               # Assigning the random value of "r"
+        
+        cdf <- c(0, cumsum(TPM[activeState, ]))
+        
+        for (j in 1:size) {         # Creating a loop to determine
+                                    # the interval of "r",
+                                    # and also to update the current state
+                                    # and the occurrence sequence accordingly
+            
+            if ((r >    cdf[j]  ) && 
+                (r <=   cdf[j+1])   ) {
+                
+                activeState <- j
+                
+                statesVec <- append(statesVec, j)
+                
+            }
+            
+                
+        }
+        
+    }
+    
+    return(table(statesVec)/n)
+    
+}
+
+
+```
+
+Simulating with the previously obtained probability matrices yields the following steady-state distributions:
+
+```{r monte-carlo-simulation-P1}
+
+exeTimes <- data.frame(row.names    = c("Monte Carlo",      # Creating an empty data frame
+                                        "Matrix Mult."),    # to store execution times 
+                       P1           = numeric(2),
+                       P2           = numeric(2),
+                       P3           = numeric(2)        )
+
+set.seed(seed)
+
+exeTimes[c("Monte Carlo"), c("P1")] <- Sys.time()
+
+P1MC <- MonteCarlo(P1, M)
+
+exeTimes[c("Monte Carlo"), c("P1")] <- Sys.time() - exeTimes[c("Monte Carlo"), c("P1")]
+
+P1MC
+
+```
+
+```{r monte-carlo-simulation-P2}
+
+exeTimes[c("Monte Carlo"), c("P2")] <- Sys.time()
+
+P2MC <- MonteCarlo(P2, M)
+
+exeTimes[c("Monte Carlo"), c("P2")] <- Sys.time() - exeTimes[c("Monte Carlo"), c("P2")]
+
+P2MC
+
+```
+
+```{r monte-carlo-simulation-P3}
+
+exeTimes[c("Monte Carlo"), c("P3")] <- Sys.time()
+
+P3MC <- MonteCarlo(P3, M)
+
+exeTimes[c("Monte Carlo"), c("P3")] <- Sys.time() - exeTimes[c("Monte Carlo"), c("P3")]
+
+P3MC
+
+```
+
+\newpage
+
+# Applying Martix Multiplication Method
+
+A function that takes $P$ and a stopping condition parameter $E$ and applies matrix multiplication until the length of the difference between a randomly selected row and row averages is less than $E$ can be defined as follows:
+
+```{r matrix-multiplication-function}
+
+matrixMult <- function(TPM, E) {
+    
+    activeMatrix <- TPM                                                 
+    
+    piBar <- colMeans(activeMatrix)                     # Average of rows 
+                                                        # stored in a vector
+    
+    randomRow <- sample(1:nrow(activeMatrix), 1)        # Picking a random row
+    
+    convergence <- sqrt(sum(                            # A logical variable that
+        (activeMatrix[randomRow, ] - piBar )^2)  ) < E  # indicates whether
+                                                        # the current convergence 
+                                                        # is sufficient
+    
+    while (!convergence) {                              # Updating the local variables
+                                                        # until the convergence condition
+                                                        # is satisfied
+        
+        activeMatrix <- activeMatrix %*% activeMatrix   # Matrix multiplication
+        
+        piBar <- colMeans(activeMatrix)
+        
+        randomRow <- sample(1:nrow(activeMatrix), 1)
+        
+        convergence <- sqrt(sum((activeMatrix[randomRow, ] - piBar)^2)) < E
+        
+    }
+    
+    return(piBar)
+    
+}
+```
+
+```{r matrix-multiplication-P1}
+
+set.seed(seed)
+
+exeTimes[c("Matrix Mult."), c("P1")] <- Sys.time()
+
+P1MM <- matrixMult(P1, E)
+
+exeTimes[c("Matrix Mult."), c("P1")] <- Sys.time() - exeTimes[c("Matrix Mult."), c("P1")]
+
+P1MM
+
+```
+
+```{r matrix-multiplication-P2}
+
+exeTimes[c("Matrix Mult."), c("P2")] <- Sys.time()
+
+P2MM <- matrixMult(P2, E)
+
+exeTimes[c("Matrix Mult."), c("P2")] <- Sys.time() - exeTimes[c("Matrix Mult."), c("P2")]
+
+P2MM
+
+```
+
+```{r matrix-multiplication-P3}
+
+exeTimes[c("Matrix Mult."), c("P3")] <- Sys.time()
+
+P3MM <- matrixMult(P3, E)
+
+exeTimes[c("Matrix Mult."), c("P3")] <- Sys.time() - exeTimes[c("Matrix Mult."), c("P3")]
+
+P3MM
+
+```
+
+\newpage
+
+# Comparison of the Results Obtained by Two Different Methods
+
+First off, the similarity between the obtained steady-state distributions by the two methods can be checked. This can be done by plotting the distributions.
+
+```{r steady-state-distribution-plots-1, fig.show="hold", out.width="75%", fig.cap="Steady State Distributions Obtained Using P1"}
+
+ggplot(data.frame(P1MC, P1MM),
+       aes(x = statesVec)       )               +
+    
+    geom_line(aes(y     = Freq,
+                  color = 'Monte Carlo',
+                  group = 1)            )       +
+    
+    geom_line(aes(y     = P1MM,
+                  color = 'Matrix Mult.',
+                  group = 1)                )   +
+    
+    labs(x = "State",
+         y = "Probability")                     +
+    
+    scale_color_manual(name     = "Method",
+                       values   = c("Monte Carlo"     = "darkblue",
+                                    "Matrix Mult."    = "firebrick3")   )
+
+```
+
+```{r steady-state-distribution-plots-2, fig.show="hold", out.width="75%", fig.cap="Steady State Distributions Obtained Using P2"}
+
+ggplot(data.frame(P2MC, P2MM),
+       aes(x = statesVec)       )               +
+    
+    geom_line(aes(y     = Freq,
+                  color = 'Monte Carlo',
+                  group = 1)            )       +
+    
+    geom_line(aes(y     = P2MM,
+                  color = 'Matrix Mult.',
+                  group = 1)                )   +
+    
+    labs(x = "State",
+         y = "Probability")                     +
+    
+    scale_color_manual(name     = "Method",
+                       values   = c("Monte Carlo"     = "darkblue",
+                                    "Matrix Mult."    = "firebrick3")   )
+
+```
+
+```{r steady-state-distributions-plot-3, fig.show="hold", out.width="75%", fig.cap="Steady State Distributions Obtained Using P3"}
+
+ggplot(data.frame(P3MC, P3MM),
+       aes(x = statesVec)       )               +
+    
+    geom_line(aes(y     = Freq,
+                  color = 'Monte Carlo',
+                  group = 1)            )       +
+    
+    geom_line(aes(y     = P3MM,
+                  color = 'Matrix Mult.',
+                  group = 1)                )   +
+    
+    labs(x = "State",
+         y = "Probability")                     +
+    
+    theme(axis.text.x  = element_blank())       +
+    
+    scale_color_manual(name     = "Method",
+                       values   = c("Monte Carlo"     = "darkblue",
+                                    "Matrix Mult."    = "firebrick3")   )
+
+```
+
+As can be seen in the above plots, the distributions are quite close, and their difference increases when the size of the matrix $P$ is increased. This can be associated with the fact that higher matrix sizes retard convergence. 
+
+Next, execution times can be checked as follows:
+
+```{r execution-times}
+
+print(round(exeTimes, 3))
+
+```
+
+There is a huge difference between the run times, probably due to the large $M$ value used during Monte Carlo Simulations. Keeping in the mind that the two methods have given similar distributions, it can be concluded that matrix multiplication method works more efficiently. This stems from its exponential-like approach, being multiplying the matrix $P$ by itself repeatedly, that allows the algorithm to skip unnecessary calculations, while Monte Carlo Simulation calculates each state one by one.
+
+\newpage
+
+# Checking the Case with Absorbing States
+
+To include an absorbing state, one element in the diagonal should be set to 1, in other words, in each matrix there should be one element that satisfies the condition $p_{jj}=1$. Simply, $p_{11}, p_{22}, p_{33}$ can be selected for $P_1, P_2, P_3$, respectively: 
+
+```{r absorbing-states-case}
+
+P1Abs       <- P1
+P2Abs       <- P2
+P3Abs       <- P3
+
+P1Abs[2, ]  <- c(0, 1, rep(0, 4))           # Row number is 1+1, since R starts indexing 
+                                            # from 1 instead of 0
+P2Abs[3, ]  <- c(0, 0, 1, rep(0, 23))     
+P3Abs[4, ]  <- c(0, 0, 0, 1, rep(0, 47))
+
+```
+
+```{r monte-carlo-simulation-P1-absorbing}
+
+exeTimesAbs <- data.frame(row.names = c("Monte Carlo",      # Creating an empty data frame
+                                        "Matrix Mult."),    # to store execution times 
+                          P1        = numeric(2),
+                          P2        = numeric(2),
+                          P3        = numeric(2)        )
+
+set.seed(seed)
+
+exeTimesAbs[c("Monte Carlo"), c("P1")] <- Sys.time()
+
+P1AbsMC <- MonteCarlo(P1Abs, M)
+
+exeTimesAbs[c("Monte Carlo"), c("P1")] <-   Sys.time() - 
+                                            exeTimesAbs[c("Monte Carlo"), c("P1")]
+
+P1AbsMC
+
+```
+
+```{r monte-carlo-simulation-P2-absorbing}
+
+exeTimesAbs[c("Monte Carlo"), c("P2")] <- Sys.time()
+
+P2AbsMC <- MonteCarlo(P2Abs, M)
+
+exeTimesAbs[c("Monte Carlo"), c("P2")] <-   Sys.time() - 
+                                            exeTimesAbs[c("Monte Carlo"), c("P2")]
+
+P2AbsMC
+
+```
+
+```{r monte-carlo-simulation-P3-absorbing}
+
+exeTimesAbs[c("Monte Carlo"), c("P3")] <- Sys.time()
+
+P3AbsMC <- MonteCarlo(P3Abs, M)
+
+exeTimesAbs[c("Monte Carlo"), c("P3")] <-   Sys.time() - 
+                                            exeTimesAbs[c("Monte Carlo"), c("P3")]
+
+P3AbsMC
+
+```
+
+```{r matrix-multiplication-P1-absorbing}
+
+set.seed(seed)
+
+exeTimesAbs[c("Matrix Mult."), c("P1")] <- Sys.time()
+
+P1AbsMM <- matrixMult(P1Abs, E)
+
+exeTimesAbs[c("Matrix Mult."), c("P1")] <-  Sys.time() -
+                                            exeTimesAbs[c("Matrix Mult."), c("P1")]
+
+P1AbsMM
+
+```
+
+```{r matrix-multiplication-P2-absorbing}
+
+exeTimesAbs[c("Matrix Mult."), c("P2")] <- Sys.time()
+
+P2AbsMM <- matrixMult(P2Abs, E)
+
+exeTimesAbs[c("Matrix Mult."), c("P2")] <-  Sys.time() -
+                                            exeTimesAbs[c("Matrix Mult."), c("P2")]
+
+P2AbsMM
+
+```
+
+```{r matrix-multiplication-P3-absorbing}
+
+exeTimesAbs[c("Matrix Mult."), c("P3")] <- Sys.time()
+
+P3AbsMM <- matrixMult(P3Abs, E)
+
+exeTimesAbs[c("Matrix Mult."), c("P3")] <-  Sys.time() -
+                                            exeTimesAbs[c("Matrix Mult."), c("P3")]
+
+P3AbsMM
+
+```
+
+As can be expected, in both methods, absorbing states have the major part of the total probability, reducing the other states to negligible steady-state probabilities. In all of the cases, their steady-state probabilities are above 90%, due to the infinite loop that starts after the first encounter with the absorbing state.
+
+An important difference between the two methods this time is that Monte Carlo Simulation has $0$ probabilities for some states in all three simulations, while the matrix multiplication method yields a steady-state distribution consisting full of non-zero values. This is because Monte Carlo Simulation is a more practical method and it only assigns non-zero probabilities to the states that occur before the first occurrence of the absorbing state during the simulation process. On the other side, the matrix multiplication method works in a theoretical way and assigns a small probability to every non-absorbing state.
+
+When it comes to execution times, the new results are as follows:
+
+```{r execution-times-absorbing}
+
+print(round(exeTimesAbs, 3))
+
+```
+
+It would not be fair to draw any conclusions from the execution times since there is no significant change or any obvious behaviors in differences between the trials with and without absorbing states. However, with a more elaborate work, the above algorithm implemented for Monte Carlo Simulation can be enhanced by the addition of some extra rules that stop iterations after the first occurrence of the absorbing state since from that point on there will be no change of state, and this would potentially reduce the execution time dramatically by eliminating redundant calculations. 
+
+$~$
